@@ -5,17 +5,41 @@ document.addEventListener('hashChangeEvent', function (event) {
     const hash = getHash();
     if (hash.parambase) {
         const select = document.getElementById('parambase');
-        if (select) {
-            const selectedOption = Array.from(select.options).find(option => option.value === hash.parambase);
-            if (selectedOption && selectedOption.dataset && selectedOption.dataset.url) {
-                loadParambaseYAML(hash.parambase, selectedOption.dataset.url);
-            }
-        }
+    if (select) {
+      const decodedParambase = decodeHashValue(hash.parambase);
+
+      const selectedOption = Array.from(select.options)
+        .find(option => option.value === decodedParambase);
+
+      if (selectedOption?.dataset?.url  && decodedParambase !== currentParambase) {
+        loadParambaseYAML(decodedParambase, selectedOption.dataset.url);
+      }
+    }
     } else {
         // No parambase - reload using the standard paramText loading process
         loadParamTextFromCurrentState();
     }
 }, false);
+
+
+function shouldSkipBaseYamlLoad(hash) {
+  // Only skip base YAML when we have hash-driven config AND no parambase selected.
+  if (hash.parambase || hash.customYamlUrl) return false;
+
+  return (
+    hash.folder ||
+    hash.features ||
+    hash.targets ||
+    hash.models ||
+    Object.keys(hash).some(k =>
+      k.startsWith("features.") ||
+      k.startsWith("targets.") ||
+      k.startsWith("models.")
+    )
+  );
+}
+
+
 
 // Function to reload paramText content without affecting the dropdown
 function loadParamTextFromCurrentState() {
@@ -36,7 +60,7 @@ function loadParamTextFromCurrentState() {
         console.log("loadParamTextFromCurrentState - hash:", hash);
         
         const modelHashParams = ["features", "targets", "models"];
-        const addHashKeys = ["features", "targets", "models"];
+        const addHashKeys = ["folder", "features", "targets", "models"];
         let parsedContent = parseYAML(preContent);
         parsedContent = updateYAMLFromHash(parsedContent, hash, addHashKeys);
         preContent = convertToYAML(parsedContent);
@@ -62,7 +86,8 @@ function updateYAMLFromHash(parsedContent, hash, addHashKeys) {
 
         // Set the value at the final key, converting numeric strings to numbers
         const lastKey = keys[keys.length - 1];
-        current[lastKey] = convertValueType(value);
+        current[lastKey] = convertValueType(decodeURIComponent(value));
+
     }
 
     // Helper function to handle comma-separated values, including encrypted commas
@@ -183,7 +208,7 @@ document.addEventListener('DOMContentLoaded', function() {
     
     function insertHashValues(modelHashParams) {
       // Main execution
-      const addHashKeys = ["features", "targets", "models"];
+      const addHashKeys = ["folder", "features", "targets", "models"];
       let parsedContent = parseYAML(preContent);
       parsedContent = updateYAMLFromHash(parsedContent, hash, addHashKeys);
       preContent = convertToYAML(parsedContent);
@@ -402,7 +427,14 @@ function createChooseLinks() {
 // Function to load base parameter selector dropdown
 async function loadBaseParamsSelect() {
     console.log('loadBaseParamsSelect() called');
-    
+    const hash = getHash();
+
+    const hashDriven = hasRecognizedParamsInHash(hash) && !hash.parambase;
+
+if (hashDriven) {
+  console.log('[parambase] Hash-driven config detected (no parambase). Will populate dropdown but skip auto-load.');
+}
+
     // Insert dropdown before the paramText div
     const paramTextDiv = document.getElementById('paramText');
     console.log('paramText div found:', !!paramTextDiv);
@@ -471,39 +503,60 @@ async function loadBaseParamsSelect() {
     createChooseLinks();
 
     // Set up event listener for dropdown changes
-    select.addEventListener('change', async function() {
-        const selectedKey = this.value;
-        if (selectedKey === 'custom') {
-            // Show custom path input
-            showCustomPathInput();
-            // Set parambase=custom in hash
-            const currentHash = getHash();
-            delete currentHash.customYamlUrl; // Remove any existing custom URL
-            currentHash.parambase = 'custom';
-            // Update hash to trigger hash change event
-            goHash(currentHash);
-        } else if (selectedKey) {
-            // Remove customYamlUrl from hash when switching away from custom
-            const currentHash = getHash();
-            delete currentHash.customYamlUrl;
-            // Update URL hash with parambase value
-            currentHash.parambase = selectedKey;
-            // Update hash to trigger hash change event
-            goHash(currentHash);
-            // Load the selected YAML
-            await loadParambaseYAML(selectedKey, this.selectedOptions[0].dataset.url);
-        } else {
-            // Remove both custom and parambase from hash
-            const currentHash = getHash();
-            delete currentHash.customYamlUrl;
-            delete currentHash.parambase;
-            // Update hash to trigger hash change event
-            goHash(currentHash);
-        }
-    });
+   select.addEventListener('change', async function() {
+  const selectedKey = this.value;
+
+  const currentHash = getHash();
+
+  // remove script params that should not be in hash
+  delete currentHash.showheader;
+  delete currentHash.showsearch;
+
+  // remove old YAML overrides so new parambase can load cleanly
+  delete currentHash.folder;
+  delete currentHash.features;
+  delete currentHash.targets;
+  delete currentHash.models;
+
+  // also remove dotted keys if they exist
+  Object.keys(currentHash).forEach(k => {
+    if (
+      k.startsWith("features.") ||
+      k.startsWith("targets.") ||
+      k.startsWith("models.")
+    ) delete currentHash[k];
+  });
+
+  if (selectedKey === 'custom') {
+    showCustomPathInput();
+    delete currentHash.customYamlUrl;
+    currentHash.parambase = 'custom';
+    goHash(currentHash);
+    return;
+  }
+
+  if (selectedKey) {
+    hideCustomPathInput();
+    delete currentHash.customYamlUrl;
+    currentHash.parambase = selectedKey;
+    goHash(currentHash);
+
+    // load YAML for selection
+    const url = this.selectedOptions[0]?.dataset?.url;
+    if (url) await loadParambaseYAML(selectedKey, url);
+    return;
+  }
+
+  // selectedKey is empty
+  hideCustomPathInput();
+  delete currentHash.customYamlUrl;
+  delete currentHash.parambase;
+  goHash(currentHash);
+});
+
 
     // Check if there's already a parambase in the URL hash
-    const hash = getHash();
+    // const hash = getHash();
     
     // Filter out script loading parameters (but don't exit if they exist)
     filterScriptParamsFromHash(hash, 'Initial load');
@@ -550,18 +603,46 @@ async function loadBaseParamsSelect() {
             }
         }
     } else {
-        // Load first option by default if no parambase in hash
-        if (paramOptions.length > 0) {
-            const firstOption = paramOptions[0];
-            select.value = firstOption.key;
-            updateHashParam('parambase', firstOption.key);
-            await loadParambaseYAML(firstOption.key, firstOption.url);
-        }
+      // If hash already contains model params, do NOT auto-load the first parambase
+  if (hashDriven || hasRecognizedParamsInHash(hash)) {
+    console.log('[parambase] Skipping default parambase load (hash already has config)');
+    select.value = "";
+    loadParamTextFromCurrentState();
+  } else {
+    // Original behavior: load first option by default
+    if (paramOptions.length > 0) {
+      const firstOption = paramOptions[0];
+      select.value = firstOption.key;
+      updateHashParam('parambase', firstOption.key);
+      await loadParambaseYAML(firstOption.key, firstOption.url);
+    }
+  }
     }
 
     // Ensure UI elements are created after dropdown is populated
     ensureParambaseUI();
 }
+
+function hasRecognizedParamsInHash(hash) {
+  if (!hash) return false;
+
+  // direct keys
+  if (hash.folder) return true;
+
+  // nested objects (getHash seems to build these, since you use hash.features?.dcid)
+  if (hash.features && Object.keys(hash.features).length) return true;
+  if (hash.targets && Object.keys(hash.targets).length) return true;
+  if (hash.models && Object.keys(hash.models).length) return true;
+
+  // fallback: dotted keys if they exist
+  return Object.keys(hash).some(k =>
+    k === "folder" ||
+    k.startsWith("features.") ||
+    k.startsWith("targets.") ||
+    k.startsWith("models.")
+  );
+}
+
 
 // Function to load YAML content from parambase URL
 async function loadParambaseYAML(key, url) {
@@ -590,27 +671,33 @@ async function loadParambaseYAML(key, url) {
 // Function to update paramText div with base YAML and apply hash overrides
 function updateParamTextWithBase(baseYamlText) {
     const paramTextDiv = document.getElementById('paramText');
-    const preTag = paramTextDiv.querySelector('pre');
-    
-    if (preTag) {
-        // Set base YAML content
-        preTag.innerHTML = baseYamlText;
-        
-        // Apply hash overrides
-        const hash = getHash();
-        const modelHashParams = ["features", "targets", "models"];
-        const addHashKeys = ["features", "targets", "models"];
-        
-        let parsedContent = parseYAML(baseYamlText);
-        parsedContent = updateYAMLFromHash(parsedContent, hash, addHashKeys);
-        const updatedYaml = convertToYAML(parsedContent);
-        
-        preTag.innerHTML = updatedYaml;
-        
-        // Update reset button visibility after content changes
+    const preTag = paramTextDiv?.querySelector('pre');
+    if (!preTag) return;
+
+    const hash = getHash();
+
+    // 🚫 If hash already defines model config, DO NOT overwrite with base YAML
+    if (!hash.parambase && shouldSkipBaseYamlLoad(hash)) {
+
+        console.log('[RealityStream] Skipping base YAML load, using hash-driven config');
+
+        let parsed = parseYAML(preTag.innerText);
+        parsed = updateYAMLFromHash(parsed, hash, ["folder", "features", "targets", "models"]);
+        preTag.innerHTML = convertToYAML(parsed);
         updateResetButtonVisibility();
+        return;
     }
+
+    // ✅ Normal behavior when no hash overrides exist
+    preTag.innerHTML = baseYamlText;
+
+    let parsedContent = parseYAML(baseYamlText);
+    parsedContent = updateYAMLFromHash(parsedContent, hash, ["folder", "features", "targets", "models"]);
+    preTag.innerHTML = convertToYAML(parsedContent);
+
+    updateResetButtonVisibility();
 }
+
 
 // Helper function to encode only necessary characters in hash values
 function encodeHashValue(value) {
@@ -871,7 +958,8 @@ function updateResetButtonVisibility() {
 
     // Check if there are any hash parameters that would modify the YAML content
     const hash = getHash();
-    const modelHashParams = ["features", "targets", "models"];
+    const modelHashParams = ["folder", "features", "targets", "models"];
+
     
     // Check if any model parameters exist in the hash
     const hasYamlOverrides = modelHashParams.some(param => {
