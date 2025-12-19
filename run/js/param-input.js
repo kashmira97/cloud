@@ -26,7 +26,14 @@ function shouldSkipBaseYamlLoad(hash) {
   // Only skip base YAML when we have hash-driven config AND no parambase selected.
   if (hash.parambase || hash.customYamlUrl) return false;
 
+  const hasDcid =
+    hash?.features?.dcid ||
+    hash?.targets?.dcid ||
+    hash["features.dcid"] ||
+    hash["targets.dcid"];
+
   return (
+    hasDcid ||
     hash.folder ||
     hash.features ||
     hash.targets ||
@@ -41,35 +48,31 @@ function shouldSkipBaseYamlLoad(hash) {
 
 
 
+
 // Function to reload paramText content without affecting the dropdown
 function loadParamTextFromCurrentState() {
-    const paramTextDiv = document.getElementById('paramText');
-    if (!paramTextDiv) return;
-    
-    const preTag = paramTextDiv.querySelector('pre');
-    if (!preTag) return;
-    
-    // Check if we have a current parambase with cached content
-    if (currentParambase && cachedParambaseContent[currentParambase]) {
-        // Use the base YAML and apply any hash overrides
-        updateParamTextWithBase(cachedParambaseContent[currentParambase]);
-    } else {
-        // Fall back to the original loadParamText process
-        let preContent = preTag.innerHTML;
-        let hash = getHash();
-        console.log("loadParamTextFromCurrentState - hash:", hash);
-        
-        const modelHashParams = ["features", "targets", "models"];
-        const addHashKeys = ["folder", "features", "targets", "models"];
-        let parsedContent = parseYAML(preContent);
-        parsedContent = updateYAMLFromHash(parsedContent, hash, addHashKeys);
-        preContent = convertToYAML(parsedContent);
-        preTag.innerHTML = preContent;
-        
-        // Update reset button visibility after content changes
-        updateResetButtonVisibility();
-    }
+  const el = document.getElementById('paramText');
+  if (!el) return;
+
+  // ✅ If we have a current parambase with cached content
+  if (currentParambase && cachedParambaseContent[currentParambase]) {
+    updateParamTextWithBase(cachedParambaseContent[currentParambase]);
+    return;
+  }
+
+  // ✅ Fall back to current content + hash overrides
+  let content = el.value || '';
+  const hash = getHash();
+  console.log("loadParamTextFromCurrentState - hash:", hash);
+
+  const addHashKeys = ["folder", "features", "targets", "models"];
+  let parsedContent = parseYAML(content);
+  parsedContent = updateYAMLFromHash(parsedContent, hash, addHashKeys);
+  el.value = convertToYAML(parsedContent);
+
+  updateResetButtonVisibility();
 }
+
 
 function updateYAMLFromHash(parsedContent, hash, addHashKeys) {
     // Sets nested yaml values for textbox while preserving existing structure
@@ -116,15 +119,12 @@ function updateYAMLFromHash(parsedContent, hash, addHashKeys) {
                 return;
             }
 
-            if (typeof obj[key] === 'object' && obj[key] !== null) {
-                // If value is an object, recurse deeper
-                traverseAndUpdate(obj[key], currentPath);
-            } else {
-                // Process value for comma-separated strings
-                const processedValue = handleCommaSeparatedValue(obj[key]);
-                // Update the parsedContent with the processed value
-                setNestedValue(parsedContent, currentPath, processedValue);
-            }
+           if (typeof obj[key] === 'object' && obj[key] !== null && !Array.isArray(obj[key])) {
+  traverseAndUpdate(obj[key], currentPath);
+} else {
+  const processedValue = handleCommaSeparatedValue(obj[key]);
+  setNestedValue(parsedContent, currentPath, processedValue);
+}
         });
     }
 
@@ -152,6 +152,241 @@ function convertValueType(value) {
     // Return as string if no conversion needed
     return value;
 }
+
+function initFeatureTargetPanel() {
+  const featuresList = document.getElementById("featuresList");
+  const targetInput = document.getElementById("targetInput");
+  const addBtn = document.getElementById("addFeatureBtn");
+  const invertBtn = document.getElementById("invertBtn");
+  const getFeatureBtn = document.getElementById("getFeatureBtn");
+const getTargetBtn = document.getElementById("getTargetBtn");
+
+
+  if (!featuresList || !targetInput || !addBtn || !invertBtn || !getFeatureBtn || !getTargetBtn) {
+    return; // UI not present
+  }
+
+  // local UI state (so +Add can show an empty row without writing junk to hash)
+  let uiFeatures = [];
+  let uiTarget = "";
+
+  function readFromHash() {
+  const h = getHash();
+
+  // try hash first
+  let fRaw = h?.features?.dcid ?? h["features.dcid"] ?? "";
+  let tRaw = h?.targets?.dcid ?? h["targets.dcid"] ?? "";
+
+  fRaw = decodeHashValue(fRaw);
+  tRaw = decodeHashValue(tRaw);
+
+  let featuresArr = String(fRaw || "")
+    .split(",")
+    .map(s => s.trim())
+    .filter(Boolean);
+
+  let target = String(tRaw || "").trim();
+
+  // ✅ fallback: if hash has nothing, read from YAML in textarea
+  if (!featuresArr.length && !target) {
+
+
+    const el = document.getElementById("paramText");
+    if ((!featuresArr.length && !target)) {
+  const el = document.getElementById("paramText");
+    if (el && el.value) {
+      try {
+        const y = parseYAML(el.value);
+
+        // features can be either array or object with dcid
+        let yFeatures = [];
+        if (Array.isArray(y?.features)) {
+          yFeatures = y.features.map(f => f?.dcid).filter(Boolean);
+        } else if (y?.features?.dcid) {
+          if (Array.isArray(y.features.dcid)) yFeatures = y.features.dcid;
+          else yFeatures = String(y.features.dcid).split(",").map(s => s.trim()).filter(Boolean);
+        }
+
+        const yTarget = (y?.targets?.dcid || "").toString().trim();
+
+        
+         if (!featuresArr.length) featuresArr = yFeatures;
+      if (!target) target = yTarget;
+      } catch (e) {
+        console.warn("readFromHash: YAML parse failed", e);
+      }
+    }
+  }}
+
+  uiFeatures = featuresArr.length ? featuresArr : [""];
+  uiTarget = target;
+}
+
+
+  function writeToHash() {
+    const h = getHash();
+    h.features = h.features || {};
+    h.targets = h.targets || {};
+
+    // only write non-empty features to hash
+    const cleanFeatures = uiFeatures.map(s => (s || "").trim()).filter(Boolean);
+    if (cleanFeatures.length) {
+      h.features.dcid = cleanFeatures.join(",");
+    } else {
+      // remove features.dcid if empty
+      if (h.features) delete h.features.dcid;
+      delete h["features.dcid"];
+    }
+
+    // only one target
+    const cleanTarget = (uiTarget || "").trim();
+    if (cleanTarget) {
+      h.targets.dcid = cleanTarget;
+    } else {
+      if (h.targets) delete h.targets.dcid;
+      delete h["targets.dcid"];
+    }
+
+    goHash(h);
+  }
+
+  function refreshYamlBox() {
+    // rebuild YAML box from current state/hash
+    loadParamTextFromCurrentState();
+  }
+
+  function render() {
+    // target
+    targetInput.value = uiTarget || "";
+
+    // features list
+    featuresList.innerHTML = "";
+    uiFeatures.forEach((val, idx) => {
+      const row = document.createElement("div");
+      row.style.display = "flex";
+      row.style.gap = "8px";
+      row.style.alignItems = "center";
+      row.style.margin = "6px 0";
+
+      row.innerHTML = `
+        <input class="featureInput" type="text" value="${val || ""}"
+               placeholder="features.dcid"
+               style="padding:8px; width:420px; max-width:100%;" />
+        <button type="button" class="removeBtn">Remove</button>
+      `;
+
+      row.querySelector(".featureInput").addEventListener("input", (e) => {
+        uiFeatures[idx] = e.target.value;
+        writeToHash();
+        refreshYamlBox();
+      });
+
+      row.querySelector(".removeBtn").addEventListener("click", () => {
+        uiFeatures.splice(idx, 1);
+        if (uiFeatures.length === 0) uiFeatures = [""];
+        writeToHash();
+        render();
+        refreshYamlBox();
+      });
+
+      featuresList.appendChild(row);
+    });
+  }
+
+  // + Add (now works because it only changes local UI state)
+  addBtn.addEventListener("click", () => {
+    uiFeatures.push("");
+    render();
+  });
+
+  // target typing
+  targetInput.addEventListener("input", (e) => {
+    uiTarget = e.target.value;
+    writeToHash();
+    refreshYamlBox();
+  });
+
+  // invert (swap target with first feature)
+  invertBtn.addEventListener("click", () => {
+    if (!uiFeatures.length) uiFeatures = [""];
+    const tmp = uiFeatures[0] || "";
+    uiFeatures[0] = uiTarget || "";
+    uiTarget = tmp;
+    writeToHash();
+    render();
+    refreshYamlBox();
+  });
+
+ getFeatureBtn.addEventListener("click", () => {
+  const h = getHash();
+  h.rsRole = "feature";
+  delete h.rsDcid; // clear previous selection
+  delete h.rsPath;  
+  goHash(h);
+  window.location.href = "/localsite/timeline/" + window.location.hash;
+});
+
+getTargetBtn.addEventListener("click", () => {
+  const h = getHash();
+  h.rsRole = "target";
+  delete h.rsDcid;
+  delete h.rsPath;  
+  goHash(h);
+  window.location.href = "/localsite/timeline/" + window.location.hash;
+});
+
+
+  // keep UI in sync when hash changes (back/forward/navigation)
+  window.addEventListener("hashchange", () => {
+    readFromHash();
+    render();
+    refreshYamlBox();
+  });
+
+  // init
+
+
+  function applyReturnedSelectionIfAny() {
+  const h = getHash();
+
+  // Timeline should send back the picked dcid in rsDcid
+  const picked = decodeHashValue(h.rsDcid || "");
+  const pickedPath = decodeHashValue(h.rsPath || ""); 
+  const role = (h.rsRole || "").toLowerCase(); // "feature" or "target"
+
+  if (!picked || !role) return;
+h.features = h.features || {};
+  h.targets = h.targets || {};
+  if (role === "target") {
+    uiTarget = picked;
+      if (pickedPath) h.targets.path = pickedPath;
+  } else if (role === "feature") {
+    // append into first empty feature row, else push
+    const emptyIndex = uiFeatures.findIndex(v => !(v || "").trim());
+    if (emptyIndex >= 0) uiFeatures[emptyIndex] = picked;
+    else uiFeatures.push(picked);
+       // set features.path if timeline provided one (single path for now)
+    if (pickedPath) h.features.path = pickedPath;
+  }
+
+  // IMPORTANT: remove rsRole/rsDcid so it doesn’t re-apply on every reload
+  delete h.rsRole;
+  delete h.rsDcid;
+  delete h.rsPath; 
+  goHash(h);
+
+  // write merged features/target to hash
+  writeToHash();
+  render();
+  refreshYamlBox();
+}
+
+  readFromHash();
+  render();
+  applyReturnedSelectionIfAny();
+}
+
+
 
 function parseHashParams() {
     const hash = window.location.hash.substring(1);
@@ -191,33 +426,33 @@ document.addEventListener('DOMContentLoaded', function() {
   setupParamTextEditDetection();
   
   function loadParamText() {
-    const paramTextDiv = document.getElementById('paramText');
-    if (!paramTextDiv) return;
-    
-    const preTag = paramTextDiv.querySelector('pre');
-    if (!preTag) return;
-    
-    let preContent = preTag.innerHTML;
+  const el = document.getElementById('paramText');
+  if (!el) return;
 
-    let hash = getHash();
-    console.log("hash:", hash);
-    console.log(hash.features?.dcid)
+  let content = el.value || '';
+  const hash = getHash();
+  console.log("hash:", hash);
 
-    modelHashParams = ["features", "targets", "models"];
-    insertHashValues(modelHashParams);
-    
-    function insertHashValues(modelHashParams) {
-      // Main execution
-      const addHashKeys = ["folder", "features", "targets", "models"];
-      let parsedContent = parseYAML(preContent);
-      parsedContent = updateYAMLFromHash(parsedContent, hash, addHashKeys);
-      preContent = convertToYAML(parsedContent);
-      preTag.innerHTML = preContent;
-      
-      // Update reset button visibility after content changes
-      updateResetButtonVisibility();
-    }
-  }
+  const addHashKeys = ["folder", "features", "targets", "models"];
+  let parsedContent = parseYAML(content);
+  parsedContent = updateYAMLFromHash(parsedContent, hash, addHashKeys);
+  // If URL provides features but no targets, don't keep default targets from textarea
+const hasFeatureDcid =
+  hash?.features?.dcid || hash["features.dcid"];
+
+const hasTargetDcid =
+  hash?.targets?.dcid || hash["targets.dcid"];
+
+if (hasFeatureDcid && !hasTargetDcid && !hash.parambase) {
+  delete parsedContent.targets; // removes bees targets
+}
+
+
+  el.value = convertToYAML(parsedContent);
+
+  updateResetButtonVisibility();
+}
+
   
   function handleHashChange() {
     const hash = getHash();
@@ -308,89 +543,82 @@ document.addEventListener('DOMContentLoaded', function() {
 
 // Parse YAML content from the #paramText element
 function parseYamlContent() {
-    const paramTextElement = document.getElementById('paramText');
-    const yamlContent = paramTextElement.textContent || paramTextElement.innerText;
-    return yamlContent;
+  const el = document.getElementById('paramText');
+  return el ? (el.value || '') : '';
 }
+
 
 // Function to convert YAML to URL parameters
 function yamlToUrlParams(yamlStr) {
-    // Simple YAML parser for this specific format
-    const lines = yamlStr.split('\n');
-    const paramsYaml = {};
-    let currentKey = null;
+  let obj;
+  try {
+    obj = jsyaml.load(yamlStr);
+  } catch (e) {
+    console.warn("yamlToUrlParams: YAML parse failed", e);
+    return "";
+  }
 
-    for (const line of lines) {
-        if (line.trim() === '' || line.trim().startsWith('#')) continue;
+  const hashParams = [];
 
-        const indent = line.search(/\S|$/);
-        const colonIndex = line.indexOf(':');
+  // folder
+  if (obj?.folder) {
+    hashParams.push(`folder=${encodeURIComponent(obj.folder)}`);
+  }
 
-        if (colonIndex > 0) {
-            const key = line.substring(0, colonIndex).trim();
-            let value = line.substring(colonIndex + 1).trim();
+  // target (single)
+  const targetDcid = obj?.targets?.dcid;
+  if (targetDcid) {
+    hashParams.push(`targets.dcid=${encodeURIComponent(targetDcid)}`);
+  }
 
-            if (indent === 0) {
-                // Top level key
-                currentKey = key;
-                if (value) {
-                    paramsYaml[key] = value;
-                } else {
-                    paramsYaml[key] = {};
-                }
-            } else if (indent > 0 && currentKey) {
-                // Sub-key - ensure we have an object to add to
-                if (typeof paramsYaml[currentKey] !== 'object' || Array.isArray(paramsYaml[currentKey])) {
-                    paramsYaml[currentKey] = {};
-                }
+  const targetPath = obj?.targets?.path;            // add
+if (targetPath) hashParams.push(`targets.path=${encodeURIComponent(targetPath)}`);
 
-                if (value) {
-                    paramsYaml[currentKey][key] = value;
-                } else {
-                    paramsYaml[currentKey][key] = {};
-                }
-            }
-        } else if (line.trim().startsWith('-')) {
-            // Handle array items
-            const value = line.trim().substring(1).trim();
+// features path (single string in YAML)
+const featuresPath = obj?.features?.path;         // add
+if (featuresPath) hashParams.push(`features.path=${encodeURIComponent(featuresPath)}`);
 
-            if (!Array.isArray(paramsYaml[currentKey])) {
-                paramsYaml[currentKey] = [];
-            }
-            paramsYaml[currentKey].push(value);
-        }
+  // features (multiple)
+  let features = [];
+
+  // case 1: features as array of objects
+  if (Array.isArray(obj?.features)) {
+    features = obj.features
+      .map(f => f?.dcid)
+      .filter(Boolean);
+  }
+
+  // case 2: features.dcid as string or array
+  else if (obj?.features?.dcid) {
+    if (Array.isArray(obj.features.dcid)) {
+      features = obj.features.dcid;
+    } else {
+      features = String(obj.features.dcid)
+        .split(",")
+        .map(s => s.trim())
+        .filter(Boolean);
     }
+  }
 
-    // Convert to URL hash format with proper nesting and URL encoding
-    const hashParams = [];
+  if (features.length) {
+    hashParams.push(
+      `features.dcid=${features.map(encodeURIComponent).join(",")}`
+    );
+  }
 
-    function addParams(obj, prefix = '') {
-        for (const [key, value] of Object.entries(obj)) {
-            const paramKey = prefix ? `${prefix}.${key}` : key;
-
-            if (typeof value === 'string') {
-                hashParams.push(`${paramKey}=${encodeURIComponent(value)}`);
-            } else if (Array.isArray(value)) {
-                // OLD (encodes commas):
-                //hashParams.push(`${paramKey}=${encodeURIComponent(value.join(','))}`);
-
-                // NEW (preserves commas):
-                const joinedValues = value.map(v => encodeURIComponent(v)).join(',');
-                hashParams.push(`${paramKey}=${joinedValues}`);
-
-            } else if (typeof value === 'object' && value !== null) {
-                // Recursively handle nested objects
-                addParams(value, paramKey);
-            }
-        }
+  // models
+  if (obj?.models) {
+    if (typeof obj.models === "string") {
+      hashParams.push(`models=${encodeURIComponent(obj.models)}`);
+    } else if (obj.models?.name) {
+      hashParams.push(`models=${encodeURIComponent(obj.models.name)}`);
     }
+  }
 
-    addParams(paramsYaml);
-
-    const result = hashParams.join('&');
-    console.log("Generated URL parameters:", result);
-    return result;
+  return hashParams.join("&");
 }
+
+
 
 // Global variable to store cached parambase YAML content
 let cachedParambaseContent = {};
@@ -518,14 +746,30 @@ if (hashDriven) {
   delete currentHash.targets;
   delete currentHash.models;
 
+    // clear "return from timeline" flags too
+  delete currentHash.rsRole;
+  delete currentHash.rsDcid;
+  delete currentHash.rsPath;
+
   // also remove dotted keys if they exist
   Object.keys(currentHash).forEach(k => {
     if (
+      k === "folder" ||
       k.startsWith("features.") ||
       k.startsWith("targets.") ||
-      k.startsWith("models.")
-    ) delete currentHash[k];
+      k.startsWith("models.") ||
+      k.startsWith("rs")
+    ) {
+      delete currentHash[k];
+    }
   });
+
+
+  delete currentHash["features.path"];
+  delete currentHash["targets.path"];
+  delete currentHash["features.dcid"];
+  delete currentHash["targets.dcid"];
+
 
   if (selectedKey === 'custom') {
     showCustomPathInput();
@@ -621,6 +865,8 @@ if (hashDriven) {
 
     // Ensure UI elements are created after dropdown is populated
     ensureParambaseUI();
+    initFeatureTargetPanel();
+
 }
 
 function hasRecognizedParamsInHash(hash) {
@@ -662,6 +908,9 @@ async function loadParambaseYAML(key, url) {
         
         // Update the paramText div with new base YAML
         updateParamTextWithBase(yamlText);
+        // keep panel synced to new YAML
+window.dispatchEvent(new HashChangeEvent("hashchange"));
+
         
     } catch (error) {
         console.error('Error loading parambase YAML:', error);
@@ -670,33 +919,33 @@ async function loadParambaseYAML(key, url) {
 
 // Function to update paramText div with base YAML and apply hash overrides
 function updateParamTextWithBase(baseYamlText) {
-    const paramTextDiv = document.getElementById('paramText');
-    const preTag = paramTextDiv?.querySelector('pre');
-    if (!preTag) return;
+  const el = document.getElementById('paramText');
+  if (!el) return;
 
-    const hash = getHash();
+  const hash = getHash();
 
-    // 🚫 If hash already defines model config, DO NOT overwrite with base YAML
-    if (!hash.parambase && shouldSkipBaseYamlLoad(hash)) {
+  // 🚫 If hash already defines model config, DO NOT overwrite with base YAML
+  if (!hash.parambase && shouldSkipBaseYamlLoad(hash)) {
+    console.log('[RealityStream] Skipping base YAML load, using hash-driven config');
 
-        console.log('[RealityStream] Skipping base YAML load, using hash-driven config');
-
-        let parsed = parseYAML(preTag.innerText);
-        parsed = updateYAMLFromHash(parsed, hash, ["folder", "features", "targets", "models"]);
-        preTag.innerHTML = convertToYAML(parsed);
-        updateResetButtonVisibility();
-        return;
-    }
-
-    // ✅ Normal behavior when no hash overrides exist
-    preTag.innerHTML = baseYamlText;
-
-    let parsedContent = parseYAML(baseYamlText);
-    parsedContent = updateYAMLFromHash(parsedContent, hash, ["folder", "features", "targets", "models"]);
-    preTag.innerHTML = convertToYAML(parsedContent);
+    let parsed = parseYAML(el.value || baseYamlText || '');
+    parsed = updateYAMLFromHash(parsed, hash, ["folder", "features", "targets", "models"]);
+    el.value = convertToYAML(parsed);
 
     updateResetButtonVisibility();
+    return;
+  }
+
+  // ✅ Normal behavior
+  el.value = baseYamlText;
+
+  let parsedContent = parseYAML(baseYamlText);
+  parsedContent = updateYAMLFromHash(parsedContent, hash, ["folder", "features", "targets", "models"]);
+  el.value = convertToYAML(parsedContent);
+
+  updateResetButtonVisibility();
 }
+
 
 
 // Helper function to encode only necessary characters in hash values
@@ -974,142 +1223,71 @@ function updateResetButtonVisibility() {
 
 // Function to setup edit detection for paramText
 function setupParamTextEditDetection() {
-    let editTimeout;
-    let baseYamlContent = null;
-    
-    // Function to handle paramText changes
-    function handleParamTextEdit() {
-        console.log('handleParamTextEdit called');
-        const paramTextDiv = document.getElementById('paramText');
-        if (!paramTextDiv) {
-            console.log('No paramTextDiv found');
-            return;
-        }
-        
-        const preTag = paramTextDiv.querySelector('pre');
-        if (!preTag) {
-            console.log('No preTag found');
-            return;
-        }
-        
-        // Get current content
-        const currentContent = preTag.textContent || preTag.innerText;
-        console.log('Current content:', currentContent.substring(0, 100) + '...');
-        
-        // Skip if we don't have base content to compare against
-        if (!baseYamlContent || !currentParambase) {
-            console.log('Missing base content or currentParambase:', { 
-                hasBase: !!baseYamlContent, 
-                currentParambase: currentParambase 
-            });
-            return;
-        }
-        
-        console.log('Base content:', baseYamlContent.substring(0, 100) + '...');
-        
-        try {
-            // Parse both base and current YAML
-            const baseYaml = parseYAML(baseYamlContent);
-            const currentYaml = parseYAML(currentContent);
-            
-            console.log('Parsed YAMLs:', { baseYaml, currentYaml });
-            
-            // Find differences and update hash
-            const differences = findYamlDifferences(baseYaml, currentYaml);
-            console.log('Found differences:', differences);
-            
-            if (Object.keys(differences).length > 0) {
-                console.log('Updating hash with differences:', differences);
-                // Update hash with differences
-                updateHash(differences, true); // true = add to existing hash
-                // Reveal reset button
-                updateResetButtonVisibility();
-            } else {
-                console.log('No differences found, removing model parameters');
-                // No differences, remove model parameters from hash
-                const hash = getHash();
-                const modelHashParams = ["features", "targets", "models"];
-                const toRemove = {};
-                
-                // Remove all model-related parameters
-                modelHashParams.forEach(param => {
-                    if (hash[param]) toRemove[param] = '';
-                    // Also remove nested parameters
-                    Object.keys(hash).forEach(key => {
-                        if (key.startsWith(param + '.')) {
-                            toRemove[key] = '';
-                        }
-                    });
-                });
-                
-                if (Object.keys(toRemove).length > 0) {
-                    updateHash(toRemove, true);
-                }
-                updateResetButtonVisibility();
-            }
-        } catch (error) {
-            console.warn('Error parsing YAML during edit detection:', error);
-        }
+  let editTimeout;
+  let baseYamlContent = null;
+
+  function storeBaseYamlContent() {
+    if (currentParambase && cachedParambaseContent[currentParambase]) {
+      baseYamlContent = cachedParambaseContent[currentParambase];
     }
-    
-    // Function to store base YAML content
-    function storeBaseYamlContent() {
-        if (currentParambase && cachedParambaseContent[currentParambase]) {
-            baseYamlContent = cachedParambaseContent[currentParambase];
-        }
-    }
-    
-    // Set up mutation observer for contenteditable changes
-    const paramTextDiv = document.getElementById('paramText');
-    console.log('setupParamTextEditDetection: paramTextDiv found:', !!paramTextDiv);
-    console.log('setupParamTextEditDetection: paramTextDiv contentEditable:', paramTextDiv ? paramTextDiv.contentEditable : 'N/A');
-    
-    if (paramTextDiv) {
-        const preTag = paramTextDiv.querySelector('pre');
-        console.log('setupParamTextEditDetection: preTag found:', !!preTag);
-        
-        // Store initial base content
-        storeBaseYamlContent();
-        
-        // Listen for input events on the contenteditable div (not the pre tag)
-        paramTextDiv.addEventListener('input', function(event) {
-            console.log('Input event detected on paramTextDiv:', event);
-            clearTimeout(editTimeout);
-            editTimeout = setTimeout(handleParamTextEdit, 500); // Debounce 500ms
+  }
+
+  function handleParamTextEdit() {
+    const el = document.getElementById('paramText');
+    if (!el) return;
+
+    const currentContent = el.value || '';
+
+    if (!baseYamlContent || !currentParambase) return;
+
+    try {
+      const baseYaml = parseYAML(baseYamlContent);
+      const currentYaml = parseYAML(currentContent);
+
+      const differences = findYamlDifferences(baseYaml, currentYaml);
+
+      if (Object.keys(differences).length > 0) {
+        updateHash(differences, true);
+        updateResetButtonVisibility();
+      } else {
+        const hash = getHash();
+        const modelHashParams = ["features", "targets", "models"];
+        const toRemove = {};
+
+        modelHashParams.forEach(param => {
+          if (hash[param]) toRemove[param] = '';
+          Object.keys(hash).forEach(key => {
+            if (key.startsWith(param + '.')) toRemove[key] = '';
+          });
         });
-        
-        // Also listen for keyup events as backup
-        paramTextDiv.addEventListener('keyup', function(event) {
-            console.log('Keyup event detected on paramTextDiv:', event.key);
-            clearTimeout(editTimeout);
-            editTimeout = setTimeout(handleParamTextEdit, 500); // Debounce 500ms
-        });
-        
-        console.log('setupParamTextEditDetection: Event listeners attached to paramTextDiv');
-        
-        // Listen for when base content changes
-        if (preTag) {
-            const observer = new MutationObserver(function(mutations) {
-                mutations.forEach(function(mutation) {
-                    if (mutation.type === 'childList' || mutation.type === 'characterData') {
-                        // Update base content when YAML is loaded
-                        setTimeout(storeBaseYamlContent, 100);
-                    }
-                });
-            });
-            
-            observer.observe(preTag, {
-                childList: true,
-                subtree: true,
-                characterData: true
-            });
-        }
-    } else {
-        console.log('setupParamTextEditDetection: No paramTextDiv found, will retry in 1000ms');
-        // Retry setup after 1 second if elements aren't ready yet
-        setTimeout(setupParamTextEditDetection, 1000);
+
+        if (Object.keys(toRemove).length > 0) updateHash(toRemove, true);
+        updateResetButtonVisibility();
+      }
+    } catch (e) {
+      console.warn('Error parsing YAML during edit detection:', e);
     }
+  }
+
+  const el = document.getElementById('paramText');
+  if (!el) {
+    setTimeout(setupParamTextEditDetection, 1000);
+    return;
+  }
+
+  storeBaseYamlContent();
+
+  el.addEventListener('input', () => {
+    clearTimeout(editTimeout);
+    editTimeout = setTimeout(handleParamTextEdit, 500);
+  });
+
+  el.addEventListener('keyup', () => {
+    clearTimeout(editTimeout);
+    editTimeout = setTimeout(handleParamTextEdit, 500);
+  });
 }
+
 
 // Helper function to determine if a change is meaningful (not just whitespace or trivial punctuation)
 function isMeaningfulChange(baseValue, currentValue) {
