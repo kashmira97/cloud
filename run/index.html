@@ -15,6 +15,35 @@
     #issuesWidget {
         display: none;
     }
+/* Local server notice */
+.notice-card{
+  border: 1px solid #ddd;
+  border-left: 6px solid #f59e0b;
+  border-radius: 10px;
+  padding: 14px 16px;
+  background: #fff;
+  margin: 14px 0 18px 0;
+}
+.notice-card h3{
+  margin: 0 0 8px 0;
+}
+.notice-card a{
+  text-decoration: underline;
+}
+.notice-actions{
+  display:flex;
+  gap:10px;
+  flex-wrap:wrap;
+  margin-top:10px;
+}
+.notice-btn{
+  display:inline-block;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid #ccc;
+  background: #f7f7f7;
+  cursor: pointer;
+}
 
 }
 </style>
@@ -60,6 +89,28 @@ loadMarkdown("README.md", "readmeDiv", "_parent", 1, function() {
 <body>
 <div class="content contentpadding large-list" style="max-width: 1800px;">
   <div id="commonSetupDiv"></div>
+
+
+
+<div class="notice-card" id="localServerNotice">
+  <h3>Local Dev: start the web server first</h3>
+  <div>
+    Before running Flask or notebooks, start your local webroot server and confirm it’s running:
+    <a id="serverLink" href="/team/admin/server/">http://localhost:8887/team/admin/server/</a>
+  </div>
+
+  <div class="notice-actions">
+    <a class="notice-btn" href="/team/admin/server/">Open Server Setup</a>
+    <button class="notice-btn" type="button" id="copyServerUrl">Copy URL</button>
+  </div>
+
+  <div style="margin-top:8px; font-size: 14px; color:#555;">
+    Tip: use <strong>http</strong> (not https) for localhost/127.0.0.1 to avoid SSL errors.
+  </div>
+</div>
+
+<div id="readmeDiv"></div>
+
   <div id="readmeDiv"></div>
   <h3>Python Execution Options</h3>
 
@@ -89,6 +140,34 @@ loadMarkdown("README.md", "readmeDiv", "_parent", 1, function() {
 
   simplePython.addEventListener('change', updateInstructions);
   notebookPython.addEventListener('change', updateInstructions);
+</script>
+<script>
+  (function () {
+    // Always build a LOCAL http link to avoid SSL protocol errors on localhost/127.0.0.1
+    const host = window.location.hostname || "localhost";
+    const port = window.location.port || "8887";
+    const serverUrl = `http://${host}:${port}/team/admin/server/`;
+
+    const a = document.getElementById("serverLink");
+    if (a) {
+      a.href = "/team/admin/server/";         // relative works best once server is running
+      a.textContent = serverUrl;              // display full URL so it’s obvious
+    }
+
+    const copyBtn = document.getElementById("copyServerUrl");
+    if (copyBtn) {
+      copyBtn.addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(serverUrl);
+          copyBtn.textContent = "Copied!";
+          setTimeout(() => (copyBtn.textContent = "Copy URL"), 1200);
+        } catch (e) {
+          // fallback
+          prompt("Copy this URL:", serverUrl);
+        }
+      });
+    }
+  })();
 </script>
 
 
